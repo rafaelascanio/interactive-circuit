@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Circuit Diagram</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+    <style>
+        body { margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background-color: #f0f0f0; font-family: Arial, sans-serif; }
+        canvas { border: 1px solid black; }
+        .controls-info {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            font-size: 0.9em;
+        }
+        .controls-info h3 {
+            margin-top: 0;
+        }
+        .controls-info ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+        .controls-info li {
+            margin-bottom: 5px;
+        }
+         /* Basic button styling for p5.js sketch text buttons */
+        .p5-button {
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            background-color: #f8f8f8;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        .p5-button-active {
+            background-color: #4CAF50; /* Green */
+            color: white;
+            border-color: #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <div>
+        <div id="canvas-container"></div>
+        <div class="controls-info">
+            <h3>Controls & Status</h3>
+            <p>Click on switches in the diagram to toggle them.</p>
+            <ul>
+                <li><strong>CAPT SEAT:</strong> Main power to the system.</li>
+                <li><strong>UP/DN Switch:</strong> Controls vertical seat movement.</li>
+                <li><strong>FWD/AFT Switch:</strong> (Placeholder) Controls horizontal movement.</li>
+                <li><strong>EMERGENCY SW:</strong> (Placeholder) Stops horizontal movement.</li>
+            </ul>
+            <p>Active wires are shown in <span style="color: #FF8C00; font-weight:bold;">Orange</span>.</p>
+            <p>Energized coils/motors are <span style="color: #00FF00; font-weight:bold;">Bright Green</span>.</p>
+        </div>
+    </div>
+<script>
+// p5.js sketch starts here
+
+// --- Configuration ---
+const CANVAS_WIDTH = 1200;
+const CANVAS_HEIGHT = 850; // Increased height for better layout
+const WIRE_COLOR_INACTIVE = '#666666'; // Dark Gray
+const WIRE_COLOR_ACTIVE = '#FF8C00'; // Orange
+const WIRE_THICKNESS_INACTIVE = 1.5;
+const WIRE_THICKNESS_ACTIVE = 3;
+const COMPONENT_COLOR_INACTIVE = '#AAAAAA';
+const COMPONENT_COLOR_ACTIVE = '#00FF00'; // Bright Green for energized coils/motors
+const SWITCH_HANDLE_COLOR = '#333333';
+const SWITCH_ON_COLOR = '#4CAF50'; // Green for 'on' state of a switch body
+const LABEL_COLOR = '#000000';
+const BOX_STROKE_COLOR = '#333333';
+const BOX_FILL_COLOR = '#F0F0F0'; // Light fill for component boxes
+
+// --- Global State Variables ---
+let simState = {
+    // Power Input
+    captSeatSwitch: false, // Main power switch
+    
+    // Power Relay
+    pwrRelayCoil: false,
+    pwrRelayContacts: false,
+
+    // Vertical Control
+    upDnSwitch: 'NEUTRAL', // 'UP', 'DN', 'NEUTRAL'
+    upRelayCoil: false,
+    upRelayContacts: false,
+    dnRelayCoil: false,
+    dnRelayContacts: false,
+    upLimitSwitchClosed: true, // Normally closed, opens when limit reached
+    dnLimitSwitchClosed: true, // Normally closed, opens when limit reached
+    verticalMotor: 'OFF', // 'UP', 'DN', 'OFF'
+    seatVerticalPosition: 50, // 0 (bottom) to 100 (top)
+
+    // Horizontal Control (Placeholders)
+    fwdAftSwitch: 'NEUTRAL', // 'FWD', 'AFT', 'NEUTRAL'
+    fwdRelayCoil: false, // Conceptual
+    fwdRelayContacts: false,
+    aftRelayCoil: false, // Conceptual
+    aftRelayContacts: false,
+    emergencySwitchClosed: true, // Normally closed for operation
+    horizontalMotor: 'OFF', // 'FWD', 'AFT', 'OFF'
+    seatHorizontalPosition: 50, // 0 (rear) to 100 (front)
+
+    // Wire activity states (dynamically updated)
+    wires: {} // To store activity state of named wires
+};
+
+// --- Component Definitions (positions, dimensions, clickable areas) ---
+// These would be extensive for an exact replica. I'll define a few key ones.
+let components = {};
+let interactiveElements = []; // To store clickable areas
+
+// --- Helper Functions ---
+function drawWire(pathPoints, isActive, label = "") {
+    strokeWeight(isActive ? WIRE_THICKNESS_ACTIVE : WIRE_THICKNESS_INACTIVE);
+    stroke(isActive ? WIRE_COLOR_ACTIVE : WIRE_COLOR_INACTIVE);
+    noFill();
+    beginShape();
+    for (let pt of pathPoints) {
+        vertex(pt.x, pt.y);
+    }
+    endShape();
+    if (label && pathPoints.length > 0) {
+        fill(LABEL_COLOR);
+        noStroke();
+        textAlign(CENTER, CENTER);
+        // simple label placement for demo
+        // text(label, pathPoints[0].x - 10, pathPoints[0].y - 10); 
+    }
+}
+
+function drawSwitch(x, y, w, h, label, isOn, isToggle = true) {
+    fill(isOn ? SWITCH_ON_COLOR : COMPONENT_COLOR_INACTIVE);
+    stroke(BOX_STROKE_COLOR);
+    strokeWeight(1);
+    rect(x, y, w, h, 3); // Rounded corners
+
+    fill(LABEL_COLOR);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(12);
+    text(label, x + w / 2, y + h + 10);
+
+    // Simple handle
+    fill(SWITCH_HANDLE_COLOR);
+    if (isToggle) {
+        if (isOn) {
+            rect(x + w * 0.6, y + h * 0.2, w * 0.3, h * 0.6, 2);
+        } else {
+            rect(x + w * 0.1, y + h * 0.2, w * 0.3, h * 0.6, 2);
+        }
+    }
+    // For multi-position switches, visual would be more complex
+}
+
+function drawThreePositionSwitch(x, y, w, h, label, position, labels = ['UP', 'N', 'DN']) {
+    stroke(BOX_STROKE_COLOR);
+    strokeWeight(1);
+    fill(COMPONENT_COLOR_INACTIVE);
+    rect(x, y, w, h, 3); // Main body
+
+    textAlign(CENTER, CENTER);
+    textSize(12);
+    fill(LABEL_COLOR);
+    text(label, x + w / 2, y + h + 15);
+    
+    const segmentH = h / 3;
+    const handleWidth = w * 0.8;
+    const handleHeight = segmentH * 0.8;
+    const handleX = x + w * 0.1;
+
+    for (let i = 0; i < 3; i++) {
+        fill(LABEL_COLOR);
+        textSize(10);
+        text(labels[i], x + w + 15, y + segmentH * i + segmentH / 2); // Labels next to switch positions
+        
+        // Highlight selected position
+        if ((position === 'UP' && i === 0) || (position === 'NEUTRAL' && i === 1) || (position === 'DN' && i === 2) ||
+            (position === 'FWD' && i === 0) || (position === 'AFT' && i === 2) ) { // For FWD/AFT
+            fill(SWITCH_HANDLE_COLOR);
+            rect(handleX, y + segmentH * i + (segmentH - handleHeight)/2 , handleWidth, handleHeight, 2);
+        }
+    }
+}
+
+
+function drawRelay(x, y, w, h, label, coilActive, contactsActive) {
+    stroke(BOX_STROKE_COLOR);
+    strokeWeight(1);
+    
+    // Coil
+    fill(coilActive ? COMPONENT_COLOR_ACTIVE : COMPONENT_COLOR_INACTIVE);
+    rect(x, y, w, h * 0.4, 3); // Coil part
+    fill(LABEL_COLOR);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(10);
+    text("COIL", x + w/2, y + h * 0.2);
+
+    // Contacts (simplified: one NO contact)
+    const contactY = y + h * 0.6;
+    const contactGap = 5;
+    const contactArmLength = w * 0.4;
+    
+    stroke(BOX_STROKE_COLOR);
+    line(x + w * 0.1, contactY, x + w * 0.1 + contactArmLength, contactY); // Fixed contact point 1
+    line(x + w * 0.9, contactY, x + w * 0.9 - contactArmLength, contactY); // Fixed contact point 2
+    
+    if (contactsActive) {
+        stroke(COMPONENT_COLOR_ACTIVE); // Show connected
+        strokeWeight(2);
+        line(x + w * 0.1 + contactArmLength, contactY, x + w * 0.9 - contactArmLength, contactY); // Movable arm - closed
+    } else {
+         // No line for open state, or a very small gap indicator
+    }
+    strokeWeight(1); // Reset
+
+    fill(LABEL_COLOR);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(12);
+    text(label, x + w / 2, y + h + 10);
+}
+
+
+function drawMotor(x, y, r, label, motorState) { // motorState: 'OFF', 'UP', 'DN', 'FWD', 'AFT'
+    stroke(BOX_STROKE_COLOR);
+    strokeWeight(1);
+    fill(motorState !== 'OFF' ? COMPONENT_COLOR_ACTIVE : COMPONENT_COLOR_INACTIVE);
+    ellipse(x, y, r * 2, r * 2);
+    
+    fill(LABEL_COLOR);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(10);
+    text("M", x, y);
+    textSize(12);
+    text(label, x, y + r + 15);
+    if (motorState !== 'OFF') {
+        textSize(10);
+        text(motorState, x, y + r + 30);
+    }
+}
+
+function drawLimitSwitch(x, y, w, h, label, isClosed) {
+    stroke(BOX_STROKE_COLOR);
+    strokeWeight(1);
+    fill(COMPONENT_COLOR_INACTIVE);
+    rect(x, y, w, h, 2);
+
+    // Contacts
+    const contactY = y + h / 2;
+    const armLength = w * 0.3;
+    line(x, contactY, x + armLength, contactY); // Fixed part
+    
+    if (isClosed) {
+        line(x + armLength, contactY, x + w - armLength, contactY); // Movable part - closed
+        line(x + w - armLength, contactY, x + w, contactY);
+    } else {
+        // Open: show arm angled away
+        line(x + armLength, contactY, x + armLength + (w * 0.4 * 0.707), contactY - (w * 0.4 * 0.707) );
+        line(x + w, contactY - 5, x + w - armLength, contactY - 5); // Other fixed part
+    }
+    
+    fill(LABEL_COLOR);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(12);
+    text(label, x + w / 2, y + h + 10);
+}
+
+function defineCircuitElements() {
+    // Clear previous interactive elements
+    interactiveElements = [];
+
+    // --- Define positions and clickable areas ---
+    // These are approximate and need careful layout based on the original diagram.
+    // Format: { id, type, x, y, w, h, label, checkClick: function(mx,my){...}, action: function(){...} }
+
+    // Power Section
+    components.captSeatSwitch = { x: 50, y: 100, w: 80, h: 30, label: "CAPT SEAT" };
+    interactiveElements.push({
+        ...components.captSeatSwitch,
+        id: 'captSeatSwitch', type: 'toggle',
+        checkClick: (mx, my) => mx > components.captSeatSwitch.x && mx < components.captSeatSwitch.x + components.captSeatSwitch.w && my > components.captSeatSwitch.y && my < components.captSeatSwitch.y + components.captSeatSwitch.h,
+        action: () => simState.captSeatSwitch = !simState.captSeatSwitch
+    });
+    components.pwrSourceLabel = { x: 80, y: 50, text: "115V AC\nLEFT UTILITY BUS" };
+
+
+    // PWR RELAY
+    components.pwrRelay = { x: 200, y: 100, w: 60, h: 80, label: "PWR RELAY" };
+
+    // Vertical Control Box
+    const vertBox = { x: 300, y: 50, w: 400, h: 500 };
+    components.vertControlBoxLabel = { x: vertBox.x + vertBox.w / 2, y: vertBox.y + 15, text: "VERTICAL CONTROL CIRCUIT" };
+    
+    components.upDnSwitch = { x: vertBox.x + 50, y: vertBox.y + 50, w: 40, h: 90, label: "UP/DN\nSWITCH" };
+    // Click areas for UP/DN switch
+    interactiveElements.push({
+        id: 'upDnSwitch_UP', type: 'button', x: components.upDnSwitch.x, y: components.upDnSwitch.y, w: components.upDnSwitch.w, h: components.upDnSwitch.h / 3,
+        checkClick: (mx, my) => mx > components.upDnSwitch.x && mx < components.upDnSwitch.x + components.upDnSwitch.w && my > components.upDnSwitch.y && my < components.upDnSwitch.y + components.upDnSwitch.h / 3,
+        action: () => simState.upDnSwitch = 'UP'
+    });
+    interactiveElements.push({
+        id: 'upDnSwitch_NEUTRAL', type: 'button', x: components.upDnSwitch.x, y: components.upDnSwitch.y + components.upDnSwitch.h / 3, w: components.upDnSwitch.w, h: components.upDnSwitch.h / 3,
+        checkClick: (mx, my) => mx > components.upDnSwitch.x && mx < components.upDnSwitch.x + components.upDnSwitch.w && my > components.upDnSwitch.y + components.upDnSwitch.h / 3 && my < components.upDnSwitch.y + 2 * components.upDnSwitch.h / 3,
+        action: () => simState.upDnSwitch = 'NEUTRAL'
+    });
+    interactiveElements.push({
+        id: 'upDnSwitch_DN', type: 'button', x: components.upDnSwitch.x, y: components.upDnSwitch.y + 2 * components.upDnSwitch.h / 3, w: components.upDnSwitch.w, h: components.upDnSwitch.h / 3,
+        checkClick: (mx, my) => mx > components.upDnSwitch.x && mx < components.upDnSwitch.x + components.upDnSwitch.w && my > components.upDnSwitch.y + 2 * components.upDnSwitch.h / 3 && my < components.upDnSwitch.y + components.upDnSwitch.h,
+        action: () => simState.upDnSwitch = 'DN'
+    });
+
+    components.upRelay = { x: vertBox.x + 150, y: vertBox.y + 150, w: 60, h: 80, label: "UP RELAY" };
+    components.dnRelay = { x: vertBox.x + 150, y: vertBox.y + 280, w: 60, h: 80, label: "DN RELAY" };
+
+    components.upLimitSwitch = { x: vertBox.x + 280, y: vertBox.y + 80, w: 70, h: 25, label: "UP LIMIT\nSWITCH" };
+    interactiveElements.push({ // Manual toggle for demo, should be auto
+        ...components.upLimitSwitch, id: 'upLimitSwitch', type: 'toggle',
+        checkClick: (mx, my) => mx > components.upLimitSwitch.x && mx < components.upLimitSwitch.x + components.upLimitSwitch.w && my > components.upLimitSwitch.y && my < components.upLimitSwitch.y + components.upLimitSwitch.h,
+        action: () => simState.upLimitSwitchClosed = !simState.upLimitSwitchClosed 
+    });
+
+    components.dnLimitSwitch = { x: vertBox.x + 280, y: vertBox.y + 400, w: 70, h: 25, label: "DN LIMIT\nSWITCH" };
+     interactiveElements.push({ // Manual toggle for demo
+        ...components.dnLimitSwitch, id: 'dnLimitSwitch', type: 'toggle',
+        checkClick: (mx, my) => mx > components.dnLimitSwitch.x && mx < components.dnLimitSwitch.x + components.dnLimitSwitch.w && my > components.dnLimitSwitch.y && my < components.dnLimitSwitch.y + components.dnLimitSwitch.h,
+        action: () => simState.dnLimitSwitchClosed = !simState.dnLimitSwitchClosed
+    });
+
+    components.verticalMotor = { x: vertBox.x + 320, y: vertBox.y + 250, r: 40, label: "VERTICAL\nMOTOR" };
+
+    // Horizontal Control Box (Placeholders)
+    const horizBox = { x: 300, y: 580, w: 400, h: 220 };
+    components.horizControlBoxLabel = { x: horizBox.x + horizBox.w / 2, y: horizBox.y + 15, text: "HORIZONTAL CONTROL CIRCUIT" };
+    components.fwdAftSwitch = { x: horizBox.x + 50, y: horizBox.y + 50, w: 40, h: 90, label: "FWD/AFT\nSWITCH" };
+     interactiveElements.push({
+        id: 'fwdAftSwitch_FWD', type: 'button', x: components.fwdAftSwitch.x, y: components.fwdAftSwitch.y, w: components.fwdAftSwitch.w, h: components.fwdAftSwitch.h / 3,
+        checkClick: (mx, my) => mx > components.fwdAftSwitch.x && mx < components.fwdAftSwitch.x + components.fwdAftSwitch.w && my > components.fwdAftSwitch.y && my < components.fwdAftSwitch.y + components.fwdAftSwitch.h / 3,
+        action: () => simState.fwdAftSwitch = 'FWD'
+    });
+    interactiveElements.push({
+        id: 'fwdAftSwitch_NEUTRAL', type: 'button', x: components.fwdAftSwitch.x, y: components.fwdAftSwitch.y + components.fwdAftSwitch.h / 3, w: components.fwdAftSwitch.w, h: components.fwdAftSwitch.h / 3,
+        checkClick: (mx, my) => mx > components.fwdAftSwitch.x && mx < components.fwdAftSwitch.x + components.fwdAftSwitch.w && my > components.fwdAftSwitch.y + components.fwdAftSwitch.h / 3 && my < components.fwdAftSwitch.y + 2 * components.fwdAftSwitch.h / 3,
+        action: () => simState.fwdAftSwitch = 'NEUTRAL'
+    });
+    interactiveElements.push({
+        id: 'fwdAftSwitch_AFT', type: 'button', x: components.fwdAftSwitch.x, y: components.fwdAftSwitch.y + 2 * components.fwdAftSwitch.h / 3, w: components.fwdAftSwitch.w, h: components.fwdAftSwitch.h / 3,
+        checkClick: (mx, my) => mx > components.fwdAftSwitch.x && mx < components.fwdAftSwitch.x + components.fwdAftSwitch.w && my > components.fwdAftSwitch.y + 2 * components.fwdAftSwitch.h / 3 && my < components.fwdAftSwitch.y + components.fwdAftSwitch.h,
+        action: () => simState.fwdAftSwitch = 'AFT'
+    });
+    components.emergencySwitch = { x: horizBox.x + 150, y: horizBox.y + 150, w: 80, h: 30, label: "EMERGENCY\nSW" };
+     interactiveElements.push({
+        ...components.emergencySwitch, id: 'emergencySwitch', type: 'toggle',
+        checkClick: (mx, my) => mx > components.emergencySwitch.x && mx < components.emergencySwitch.x + components.emergencySwitch.w && my > components.emergencySwitch.y && my < components.emergencySwitch.y + components.emergencySwitch.h,
+        action: () => simState.emergencySwitchClosed = !simState.emergencySwitchClosed
+    });
+    components.horizontalMotor = { x: horizBox.x + 300, y: horizBox.y + 80, r: 40, label: "HORIZONTAL\nMOTOR" };
+    components.fwdAftRelaysLabel = {x: horizBox.x + 180, y: horizBox.y + 60, text: "FWD/AFT\nRELAYS\n(Conceptual)"};
+
+    // Define Wires (example paths, would need many more for full diagram)
+    // Naming convention: wire_source_destination_id
+    simState.wires.w_bus_captSw = [{x:components.pwrSourceLabel.x, y:components.pwrSourceLabel.y+30}, {x:components.captSeatSwitch.x, y:components.captSeatSwitch.y + components.captSeatSwitch.h/2}];
+    simState.wires.w_captSw_pwrRelayCoil_1 = [{x:components.captSeatSwitch.x + components.captSeatSwitch.w, y:components.captSeatSwitch.y + components.captSeatSwitch.h/2}, {x:components.pwrRelay.x, y:components.pwrRelay.y + components.pwrRelay.h*0.2}];
+    simState.wires.w_pwrRelayCoil_gnd = [{x:components.pwrRelay.x + components.pwrRelay.w, y:components.pwrRelay.y + components.pwrRelay.h*0.2}, {x:components.pwrRelay.x + components.pwrRelay.w + 20, y:components.pwrRelay.y + components.pwrRelay.h*0.2}, {x:components.pwrRelay.x + components.pwrRelay.w + 20, y: 30}]; // To a common ground point
+    
+    simState.wires.w_captSw_pwrRelayContactIn = [{x:components.captSeatSwitch.x + components.captSeatSwitch.w, y:components.captSeatSwitch.y + components.captSeatSwitch.h/2}, {x:components.captSeatSwitch.x + components.captSeatSwitch.w + 20, y:components.captSeatSwitch.y + components.captSeatSwitch.h/2}, {x:components.pwrRelay.x + components.pwrRelay.w*0.1, y:components.pwrRelay.y + components.pwrRelay.h*0.6}];
+    simState.wires.w_pwrRelayContactOut_vertBus = [{x:components.pwrRelay.x + components.pwrRelay.w*0.9, y:components.pwrRelay.y + components.pwrRelay.h*0.6}, {x:vertBox.x, y:components.pwrRelay.y + components.pwrRelay.h*0.6}];
+    
+    // Vertical circuit wires (simplified examples)
+    const vertBusY = components.pwrRelay.y + components.pwrRelay.h*0.6;
+    simState.wires.w_vertBus_upDnSw = [{x:vertBox.x, y:vertBusY}, {x:components.upDnSwitch.x + components.upDnSwitch.w/2, y:vertBusY}, {x:components.upDnSwitch.x + components.upDnSwitch.w/2, y:components.upDnSwitch.y + components.upDnSwitch.h/2}];
+    
+    simState.wires.w_upDnSwUP_upRelayCoil = [{x:components.upDnSwitch.x + components.upDnSwitch.w, y:components.upDnSwitch.y + components.upDnSwitch.h/6}, {x:components.upRelay.x, y:components.upRelay.y + components.upRelay.h*0.2}];
+    simState.wires.w_upDnSwDN_dnRelayCoil = [{x:components.upDnSwitch.x + components.upDnSwitch.w, y:components.upDnSwitch.y + 5*components.upDnSwitch.h/6}, {x:components.dnRelay.x, y:components.dnRelay.y + components.dnRelay.h*0.2}];
+    
+    // Connections through limit switches to relay coils (simplified)
+    // Up Relay coil return path through DN Limit Switch (NC contact of DN Relay for interlock - not fully drawn) and UP Limit Switch
+    simState.wires.w_upRelayCoil_upLimit = [{x:components.upRelay.x + components.upRelay.w, y:components.upRelay.y + components.upRelay.h*0.2}, {x:components.upLimitSwitch.x, y:components.upRelay.y + components.upRelay.h*0.2}];
+    simState.wires.w_upLimit_gnd = [{x:components.upLimitSwitch.x + components.upLimitSwitch.w, y:components.upRelay.y + components.upRelay.h*0.2}, {x:components.upLimitSwitch.x + components.upLimitSwitch.w + 20, y:components.upRelay.y + components.upRelay.h*0.2}, {x:components.upLimitSwitch.x + components.upLimitSwitch.w + 20, y:vertBusY + 150}]; // Common ground/return path for vertical
+
+    // DN Relay coil return path through UP Limit Switch (NC contact of UP Relay for interlock) and DN Limit Switch
+    simState.wires.w_dnRelayCoil_dnLimit = [{x:components.dnRelay.x + components.dnRelay.w, y:components.dnRelay.y + components.dnRelay.h*0.2}, {x:components.dnLimitSwitch.x, y:components.dnRelay.y + components.dnRelay.h*0.2}];
+    simState.wires.w_dnLimit_gnd = [{x:components.dnLimitSwitch.x + components.dnLimitSwitch.w, y:components.dnRelay.y + components.dnRelay.h*0.2}, {x:components.dnLimitSwitch.x + components.dnLimitSwitch.w + 20, y:components.dnRelay.y + components.dnRelay.h*0.2}, {x:components.dnLimitSwitch.x + components.dnLimitSwitch.w + 20, y:vertBusY + 150}];
+
+
+    // Motor power from relay contacts (very simplified)
+    simState.wires.w_vertBus_upRelayContactIn = [{x:vertBox.x, y:vertBusY}, {x:components.upRelay.x + components.upRelay.w*0.1, y:components.upRelay.y + components.upRelay.h*0.6}];
+    simState.wires.w_upRelayContactOut_motor = [{x:components.upRelay.x + components.upRelay.w*0.9, y:components.upRelay.y + components.upRelay.h*0.6}, {x:components.verticalMotor.x, y:components.verticalMotor.y - components.verticalMotor.r - 10}];
+    
+    simState.wires.w_vertBus_dnRelayContactIn = [{x:vertBox.x, y:vertBusY}, {x:vertBox.x - 20, y:vertBusY}, {x:vertBox.x - 20, y:components.dnRelay.y + components.dnRelay.h*0.6}, {x:components.dnRelay.x + components.dnRelay.w*0.1, y:components.dnRelay.y + components.dnRelay.h*0.6}];
+    simState.wires.w_dnRelayContactOut_motor = [{x:components.dnRelay.x + components.dnRelay.w*0.9, y:components.dnRelay.y + components.dnRelay.h*0.6}, {x:components.verticalMotor.x, y:components.verticalMotor.y + components.verticalMotor.r + 10}];
+}
+
+function updateLogic() {
+    // --- Power Relay Logic ---
+    simState.pwrRelayCoil = simState.captSeatSwitch;
+    simState.pwrRelayContacts = simState.pwrRelayCoil; // Assuming contacts follow coil directly
+
+    // --- Vertical Seat Logic ---
+    let powerToVerticalCircuit = simState.pwrRelayContacts;
+
+    // Seat movement simulation and limit switch logic
+    const motorSpeed = 0.5; // units per frame
+    if (simState.verticalMotor === 'UP') {
+        simState.seatVerticalPosition += motorSpeed;
+        if (simState.seatVerticalPosition >= 100) {
+            simState.seatVerticalPosition = 100;
+            simState.upLimitSwitchClosed = false; // UP limit reached, switch opens
+            simState.verticalMotor = 'OFF'; // Stop motor
+        }
+    } else if (simState.verticalMotor === 'DN') {
+        simState.seatVerticalPosition -= motorSpeed;
+        if (simState.seatVerticalPosition <= 0) {
+            simState.seatVerticalPosition = 0;
+            simState.dnLimitSwitchClosed = false; // DN limit reached, switch opens
+            simState.verticalMotor = 'OFF'; // Stop motor
+        }
+    }
+    // Allow manual reset of limit switches if motor is off (for demo)
+    if (simState.verticalMotor === 'OFF') {
+        if (simState.seatVerticalPosition < 100) simState.upLimitSwitchClosed = true;
+        if (simState.seatVerticalPosition > 0) simState.dnLimitSwitchClosed = true;
+    }
+
+
+    // UP Relay Coil: Power from vert bus -> UP/DN Switch (UP) -> DN Relay NC Interlock (Simplified: assume always closed if DN relay not active) -> UP Limit Switch (Closed) -> Coil -> GND
+    simState.upRelayCoil = powerToVerticalCircuit && simState.upDnSwitch === 'UP' && simState.upLimitSwitchClosed && !simState.dnRelayCoil; // Added interlock
+    simState.upRelayContacts = simState.upRelayCoil;
+
+    // DN Relay Coil: Power from vert bus -> UP/DN Switch (DN) -> UP Relay NC Interlock (Simplified) -> DN Limit Switch (Closed) -> Coil -> GND
+    simState.dnRelayCoil = powerToVerticalCircuit && simState.upDnSwitch === 'DN' && simState.dnLimitSwitchClosed && !simState.upRelayCoil; // Added interlock
+    simState.dnRelayContacts = simState.dnRelayCoil;
+
+    // Vertical Motor
+    if (simState.upRelayContacts && simState.upLimitSwitchClosed) { // Check limit switch again before running motor
+        simState.verticalMotor = 'UP';
+    } else if (simState.dnRelayContacts && simState.dnLimitSwitchClosed) {
+        simState.verticalMotor = 'DN';
+    } else {
+        // If relays are deactivated (e.g. by limit switch opening and de-energizing coil, or user changing switch)
+        if (simState.verticalMotor === 'UP' && !simState.upRelayContacts) simState.verticalMotor = 'OFF';
+        if (simState.verticalMotor === 'DN' && !simState.dnRelayContacts) simState.verticalMotor = 'OFF';
+        if(simState.upDnSwitch === 'NEUTRAL') simState.verticalMotor = 'OFF';
+    }
+
+
+    // --- Horizontal Seat Logic (Placeholder) ---
+    let powerToHorizontalCircuit = simState.pwrRelayContacts && simState.emergencySwitchClosed;
+    simState.fwdRelayCoil = powerToHorizontalCircuit && simState.fwdAftSwitch === 'FWD';
+    simState.fwdRelayContacts = simState.fwdRelayCoil;
+    simState.aftRelayCoil = powerToHorizontalCircuit && simState.fwdAftSwitch === 'AFT';
+    simState.aftRelayContacts = simState.aftRelayCoil;
+    
+    if (simState.fwdRelayContacts) simState.horizontalMotor = 'FWD';
+    else if (simState.aftRelayContacts) simState.horizontalMotor = 'AFT';
+    else simState.horizontalMotor = 'OFF';
+
+
+    // --- Update Wire Activity ---
+    // This needs to be comprehensive, tracing power from source.
+    simState.wires.w_bus_captSw_active = true; // Always potential from bus
+    simState.wires.w_captSw_pwrRelayCoil_1_active = simState.captSeatSwitch;
+    simState.wires.w_pwrRelayCoil_gnd_active = simState.pwrRelayCoil;
+    simState.wires.w_captSw_pwrRelayContactIn_active = simState.captSeatSwitch;
+    simState.wires.w_pwrRelayContactOut_vertBus_active = simState.pwrRelayContacts;
+
+    let vertBusActive = simState.pwrRelayContacts;
+    simState.wires.w_vertBus_upDnSw_active = vertBusActive;
+    simState.wires.w_upDnSwUP_upRelayCoil_active = vertBusActive && simState.upDnSwitch === 'UP';
+    simState.wires.w_upDnSwDN_dnRelayCoil_active = vertBusActive && simState.upDnSwitch === 'DN';
+    
+    simState.wires.w_upRelayCoil_upLimit_active = simState.upRelayCoil; // Power flows to limit switch if coil energized
+    simState.wires.w_upLimit_gnd_active = simState.upRelayCoil && simState.upLimitSwitchClosed; // Completes circuit if limit switch closed
+
+    simState.wires.w_dnRelayCoil_dnLimit_active = simState.dnRelayCoil;
+    simState.wires.w_dnLimit_gnd_active = simState.dnRelayCoil && simState.dnLimitSwitchClosed;
+
+    simState.wires.w_vertBus_upRelayContactIn_active = vertBusActive;
+    simState.wires.w_upRelayContactOut_motor_active = simState.upRelayContacts; // Motor gets power if UP relay contacts closed
+    
+    simState.wires.w_vertBus_dnRelayContactIn_active = vertBusActive;
+    simState.wires.w_dnRelayContactOut_motor_active = simState.dnRelayContacts; // Motor gets power if DN relay contacts closed
+}
+
+
+// --- p5.js Sketch Functions ---
+function setup() {
+    let canvas = createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    canvas.parent('canvas-container');
+    defineCircuitElements();
+    textFont('Arial');
+}
+
+function draw() {
+    background(220);
+    updateLogic();
+
+    // Draw connecting lines (wires) first
+    for (const wireName in simState.wires) {
+        if (wireName.endsWith('_active')) continue; // Skip the activity state itself
+        const path = simState.wires[wireName];
+        const isActive = simState.wires[wireName + '_active'] || false; // Check for corresponding _active flag
+        drawWire(path, isActive);
+    }
+    
+    // Draw component boxes / areas
+    stroke(BOX_STROKE_COLOR);
+    fill(BOX_FILL_COLOR);
+    rect(components.vertControlBox.x, components.vertControlBox.y, components.vertControlBox.w, components.vertControlBox.h, 5);
+    rect(components.horizControlBox.x, components.horizControlBox.y, components.horizControlBox.w, components.horizControlBox.h, 5);
+
+    // Draw components
+    textAlign(CENTER, CENTER);
+    fill(LABEL_COLOR);
+    noStroke();
+    textSize(14);
+    text(components.pwrSourceLabel.text, components.pwrSourceLabel.x, components.pwrSourceLabel.y);
+    text(components.vertControlBoxLabel.text, components.vertControlBoxLabel.x, components.vertControlBoxLabel.y);
+    text(components.horizControlBoxLabel.text, components.horizControlBoxLabel.x, components.horizControlBoxLabel.y);
+    textSize(12); // Reset
+
+    drawSwitch(components.captSeatSwitch.x, components.captSeatSwitch.y, components.captSeatSwitch.w, components.captSeatSwitch.h, components.captSeatSwitch.label, simState.captSeatSwitch);
+    drawRelay(components.pwrRelay.x, components.pwrRelay.y, components.pwrRelay.w, components.pwrRelay.h, components.pwrRelay.label, simState.pwrRelayCoil, simState.pwrRelayContacts);
+    
+    drawThreePositionSwitch(components.upDnSwitch.x, components.upDnSwitch.y, components.upDnSwitch.w, components.upDnSwitch.h, components.upDnSwitch.label, simState.upDnSwitch);
+    drawRelay(components.upRelay.x, components.upRelay.y, components.upRelay.w, components.upRelay.h, components.upRelay.label, simState.upRelayCoil, simState.upRelayContacts);
+    drawRelay(components.dnRelay.x, components.dnRelay.y, components.dnRelay.w, components.dnRelay.h, components.dnRelay.label, simState.dnRelayCoil, simState.dnRelayContacts);
+    drawLimitSwitch(components.upLimitSwitch.x, components.upLimitSwitch.y, components.upLimitSwitch.w, components.upLimitSwitch.h, components.upLimitSwitch.label, simState.upLimitSwitchClosed);
+    drawLimitSwitch(components.dnLimitSwitch.x, components.dnLimitSwitch.y, components.dnLimitSwitch.w, components.dnLimitSwitch.h, components.dnLimitSwitch.label, simState.dnLimitSwitchClosed);
+    drawMotor(components.verticalMotor.x, components.verticalMotor.y, components.verticalMotor.r, components.verticalMotor.label, simState.verticalMotor);
+
+    // Horizontal (placeholders)
+    drawThreePositionSwitch(components.fwdAftSwitch.x, components.fwdAftSwitch.y, components.fwdAftSwitch.w, components.fwdAftSwitch.h, components.fwdAftSwitch.label, simState.fwdAftSwitch, ['FWD', 'N', 'AFT']);
+    drawSwitch(components.emergencySwitch.x, components.emergencySwitch.y, components.emergencySwitch.w, components.emergencySwitch.h, components.emergencySwitch.label, simState.emergencySwitchClosed);
+    drawMotor(components.horizontalMotor.x, components.horizontalMotor.y, components.horizontalMotor.r, components.horizontalMotor.label, simState.horizontalMotor);
+    
+    fill(LABEL_COLOR); noStroke(); textAlign(CENTER,CENTER); textSize(10);
+    text(components.fwdAftRelaysLabel.text, components.fwdAftRelaysLabel.x, components.fwdAftRelaysLabel.y);
+
+
+    // Draw Seat Position Indicators (simple text for now)
+    fill(0); noStroke(); textAlign(LEFT, TOP); textSize(12);
+    text(`Seat Vertical: ${simState.seatVerticalPosition.toFixed(0)}% (${simState.verticalMotor})`, 20, CANVAS_HEIGHT - 60);
+    text(`UP Limit: ${simState.upLimitSwitchClosed ? 'Closed' : 'Open'} | DN Limit: ${simState.dnLimitSwitchClosed ? 'Closed' : 'Open'}`, 20, CANVAS_HEIGHT - 40);
+    text(`Seat Horizontal: ${simState.seatHorizontalPosition.toFixed(0)}% (${simState.horizontalMotor})`, 20, CANVAS_HEIGHT - 20);
+
+
+    // DEBUG: Show mouse coordinates
+    // fill(0); text(`(${mouseX}, ${mouseY})`, mouseX, mouseY - 10);
+}
+
+function mousePressed() {
+    if (mouseX < 0 || mouseX > CANVAS_WIDTH || mouseY < 0 || mouseY > CANVAS_HEIGHT) return; // Ignore clicks outside canvas
+
+    for (let elem of interactiveElements) {
+        if (elem.checkClick(mouseX, mouseY)) {
+            elem.action();
+            // console.log(`Clicked ${elem.id || elem.label}`);
+            break; // Process only one click
+        }
+    }
+}
+// p5.js sketch ends here
+</script>
+</body>
+</html>
